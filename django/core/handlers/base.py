@@ -10,6 +10,7 @@ from django.core import urlresolvers
 from django.core import signals
 from django.core.exceptions import MiddlewareNotUsed, PermissionDenied, SuspiciousOperation
 from django.db import connections, transaction
+from django.http import HttpResponse
 from django.utils.encoding import force_text
 from django.utils.module_loading import import_string
 from django.utils import six
@@ -134,15 +135,6 @@ class BaseHandler(object):
                     if response is None:
                         raise
 
-            # Complain if the view returned None (a common error).
-            if response is None:
-                if isinstance(callback, types.FunctionType):    # FBV
-                    view_name = callback.__name__
-                else:                                           # CBV
-                    view_name = callback.__class__.__name__ + '.__call__'
-                raise ValueError("The view %s.%s didn't return an HttpResponse object. It returned None instead."
-                                 % (callback.__module__, view_name))
-
             # If the response supports deferred rendering, apply template
             # response middleware and then render the response
             if hasattr(response, 'render') and callable(response.render):
@@ -155,6 +147,20 @@ class BaseHandler(object):
                             "HttpResponse object. It returned None instead."
                             % (middleware_method.__self__.__class__.__name__))
                 response = response.render()
+
+        except AttributeError:
+          # Provide a reasonable error message if the view didn't return
+          # an HttpResponse (a common error).
+          if isinstance(callback, types.FunctionType):    # FBV
+              view_name = callback.__name__
+          else:                                           # CBV
+              view_name = callback.__class__.__name__ + '.__call__'
+
+          if isinstance(response, HttpResponse):
+              raise
+
+          raise ValueError("The view %s.%s didn't return an HttpResponse object. It returned %s instead."
+                                       % (callback.__module__, view_name, type(response)))
 
         except http.Http404 as e:
             logger.warning('Not Found: %s', request.path,
@@ -200,6 +206,11 @@ class BaseHandler(object):
             # Get the exception info now, in case another exception is thrown later.
             signals.got_request_exception.send(sender=self.__class__, request=request)
             response = self.handle_uncaught_exception(request, resolver, sys.exc_info())
+
+
+        if response is None:
+           raise RuntimeError("Well fuck.")
+
 
         try:
             # Apply response middleware, regardless of the response
