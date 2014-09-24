@@ -28,5 +28,9 @@ def null_view(request):
     return None
 
 
+def string_view(request):
+    return "This is a string, not an HttpResponse."
+
+
 def permission_denied(request):
     raise PermissionDenied()

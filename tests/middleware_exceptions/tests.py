@@ -393,7 +393,7 @@ class MiddlewareTests(BaseMiddlewareExceptionTest):
         self._add_middleware(middleware)
         self._add_middleware(pre_middleware)
         self.assert_exceptions_handled('/middleware_exceptions/null_view/', [
-            "The view middleware_exceptions.views.null_view didn't return an HttpResponse object. It returned None instead.",
+            "The view 'middleware_exceptions.views.null_view', called at URL path '/middleware_exceptions/null_view/', didn't return an HttpResponse object. Instead, it returned 'None', a <type 'NoneType'>."
         ],
             ValueError())
 
@@ -410,7 +410,7 @@ class MiddlewareTests(BaseMiddlewareExceptionTest):
         self._add_middleware(middleware)
         self._add_middleware(pre_middleware)
         self.assert_exceptions_handled('/middleware_exceptions/null_view/', [
-            "The view middleware_exceptions.views.null_view didn't return an HttpResponse object. It returned None instead."
+            "The view 'middleware_exceptions.views.null_view', called at URL path '/middleware_exceptions/null_view/', didn't return an HttpResponse object. Instead, it returned 'None', a <type 'NoneType'>."
         ],
             ValueError())
 
@@ -418,6 +418,18 @@ class MiddlewareTests(BaseMiddlewareExceptionTest):
         self.assert_middleware_usage(pre_middleware, True, True, False, True, False)
         self.assert_middleware_usage(middleware, True, True, False, True, False)
         self.assert_middleware_usage(post_middleware, True, True, False, True, False)
+
+    def test_view_that_returns_string_raises_proper_error(self):
+        pre_middleware = TestMiddleware()
+        middleware = ExceptionMiddleware()
+        post_middleware = TestMiddleware()
+        self._add_middleware(post_middleware)
+        self._add_middleware(middleware)
+        self._add_middleware(pre_middleware)
+
+        self.assert_exceptions_handled('/middleware_exceptions/wrong_object_view/', [
+            "The view 'middleware_exceptions.views.string_view', called at URL path '/middleware_exceptions/wrong_object_view/', didn't return an HttpResponse object. Instead, it returned 'This is a string, not an HttpResponse.', a <type 'str'>."
+        ], ValueError())
 
     def test_process_request_middleware_permission_denied(self):
         pre_middleware = TestMiddleware()
@@ -704,7 +716,7 @@ class BadMiddlewareTests(BaseMiddlewareExceptionTest):
         self._add_middleware(bad_middleware)
         self._add_middleware(pre_middleware)
         self.assert_exceptions_handled('/middleware_exceptions/null_view/', [
-            "The view middleware_exceptions.views.null_view didn't return an HttpResponse object. It returned None instead.",
+            "The view 'middleware_exceptions.views.null_view', called at URL path '/middleware_exceptions/null_view/', didn't return an HttpResponse object. Instead, it returned 'None', a <type 'NoneType'>.",
             'Test Response Exception'
         ])
 
@@ -721,7 +733,7 @@ class BadMiddlewareTests(BaseMiddlewareExceptionTest):
         self._add_middleware(bad_middleware)
         self._add_middleware(pre_middleware)
         self.assert_exceptions_handled('/middleware_exceptions/null_view/', [
-            "The view middleware_exceptions.views.null_view didn't return an HttpResponse object. It returned None instead."
+            "The view 'middleware_exceptions.views.null_view', called at URL path '/middleware_exceptions/null_view/', didn't return an HttpResponse object. Instead, it returned 'None', a <type 'NoneType'>."
         ],
             ValueError())
 

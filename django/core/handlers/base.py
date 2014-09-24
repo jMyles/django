@@ -77,8 +77,8 @@ class BaseHandler(object):
 
     def get_exception_response(self, request, resolver, status_code):
         try:
-            callback, param_dict = resolver.resolve_error_handler(status_code)
-            response = callback(request, **param_dict)
+            self.callback, param_dict = resolver.resolve_error_handler(status_code)
+            response = self.callback(request, **param_dict)
         except:
             signals.got_request_exception.send(sender=self.__class__, request=request)
             response = self.handle_uncaught_exception(request, resolver, sys.exc_info())
@@ -94,7 +94,7 @@ class BaseHandler(object):
         # resolver is set
         urlconf = settings.ROOT_URLCONF
         urlresolvers.set_urlconf(urlconf)
-        resolver = urlresolvers.RegexURLResolver(r'^/', urlconf)
+        self.resolver = urlresolvers.RegexURLResolver(r'^/', urlconf)
         try:
             response = None
             # Apply request middleware
@@ -108,20 +108,20 @@ class BaseHandler(object):
                     # Reset url resolver with a custom urlconf.
                     urlconf = request.urlconf
                     urlresolvers.set_urlconf(urlconf)
-                    resolver = urlresolvers.RegexURLResolver(r'^/', urlconf)
+                    self.resolver = urlresolvers.RegexURLResolver(r'^/', urlconf)
 
-                resolver_match = resolver.resolve(request.path_info)
-                callback, callback_args, callback_kwargs = resolver_match
+                resolver_match = self.resolver.resolve(request.path_info)
+                self.callback, callback_args, callback_kwargs = resolver_match
                 request.resolver_match = resolver_match
 
                 # Apply view middleware
                 for middleware_method in self._view_middleware:
-                    response = middleware_method(request, callback, callback_args, callback_kwargs)
+                    response = middleware_method(request, self.callback, callback_args, callback_kwargs)
                     if response:
                         break
 
             if response is None:
-                wrapped_callback = self.make_view_atomic(callback)
+                wrapped_callback = self.make_view_atomic(self.callback)
                 try:
                     response = wrapped_callback(request, *callback_args, **callback_kwargs)
                 except Exception as e:
@@ -134,6 +134,10 @@ class BaseHandler(object):
                             break
                     if response is None:
                         raise
+			
+			# Complain if the view returned None (a common error).
+            if response is None:
+                self.handle_bad_response(request, self.resolver, self.callback, response)
 
             # If the response supports deferred rendering, apply template
             # response middleware and then render the response
@@ -148,20 +152,6 @@ class BaseHandler(object):
                             % (middleware_method.__self__.__class__.__name__))
                 response = response.render()
 
-        except AttributeError:
-          # Provide a reasonable error message if the view didn't return
-          # an HttpResponse (a common error).
-          if isinstance(callback, types.FunctionType):    # FBV
-              view_name = callback.__name__
-          else:                                           # CBV
-              view_name = callback.__class__.__name__ + '.__call__'
-
-          if isinstance(response, HttpResponse):
-              raise
-
-          raise ValueError("The view %s.%s didn't return an HttpResponse object. It returned %s instead."
-                                       % (callback.__module__, view_name, type(response)))
-
         except http.Http404 as e:
             logger.warning('Not Found: %s', request.path,
                         extra={
@@ -171,7 +161,7 @@ class BaseHandler(object):
             if settings.DEBUG:
                 response = debug.technical_404_response(request, e)
             else:
-                response = self.get_exception_response(request, resolver, 404)
+                response = self.get_exception_response(request, self.resolver, 404)
 
         except PermissionDenied:
             logger.warning(
@@ -180,7 +170,7 @@ class BaseHandler(object):
                     'status_code': 403,
                     'request': request
                 })
-            response = self.get_exception_response(request, resolver, 403)
+            response = self.get_exception_response(request, self.resolver, 403)
 
         except SuspiciousOperation as e:
             # The request logger receives events for any problematic request
@@ -196,7 +186,7 @@ class BaseHandler(object):
             if settings.DEBUG:
                 return debug.technical_500_response(request, *sys.exc_info(), status_code=400)
 
-            response = self.get_exception_response(request, resolver, 400)
+            response = self.get_exception_response(request, self.resolver, 400)
 
         except SystemExit:
             # Allow sys.exit() to actually exit. See tickets #1023 and #4701
@@ -205,12 +195,7 @@ class BaseHandler(object):
         except:  # Handle everything else.
             # Get the exception info now, in case another exception is thrown later.
             signals.got_request_exception.send(sender=self.__class__, request=request)
-            response = self.handle_uncaught_exception(request, resolver, sys.exc_info())
-
-
-        if response is None:
-           raise RuntimeError("Well fuck.")
-
+            response = self.handle_uncaught_exception(request, self.resolver, sys.exc_info())
 
         try:
             # Apply response middleware, regardless of the response
@@ -225,7 +210,7 @@ class BaseHandler(object):
             response = self.apply_response_fixes(request, response)
         except:  # Any exception should be gathered and handled
             signals.got_request_exception.send(sender=self.__class__, request=request)
-            response = self.handle_uncaught_exception(request, resolver, sys.exc_info())
+            response = self.handle_uncaught_exception(request, self.resolver, sys.exc_info())
 
         response._closable_objects.append(request)
 
@@ -269,5 +254,27 @@ class BaseHandler(object):
         response.
         """
         for func in self.response_fixes:
-            response = func(request, response)
+            try:
+                response = func(request, response)
+            except AttributeError:
+                self.handle_bad_response(request, self.resolver, self.callback, response)
         return response
+
+    def handle_bad_response(self, request, resolver, callback, response):
+        '''
+        Provides a more useful error message for common problems with a response
+        (ie, if a view does not return an HttpResponseBase or other compliant
+        object)
+        '''
+        # Provide a reasonable error message if the view didn't return
+        # an HttpResponse (a common error).
+        resolver_match = resolver.resolve(request.path_info)
+        callback, callback_args, callback_kwargs = resolver_match
+
+        if isinstance(callback, types.FunctionType): # FBV
+            view_name = callback.__name__
+        else: # CBV
+            view_name = callback.__class__.__name__ + '.__call__'
+
+        raise ValueError("The view '%s.%s', called at URL path '%s', didn't return an HttpResponse object. Instead, it returned '%s', a %s."
+          % (callback.__module__, view_name, request.path, response, type(response)))
